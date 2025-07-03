@@ -4,6 +4,7 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from pydantic import BaseModel, EmailStr
+from typing import List # Import the List type
 import models
 
 # --- Security Setup ---
@@ -19,7 +20,7 @@ app = FastAPI()
 
 # --- Temporary In-Memory "Databases" ---
 fake_users_db = []
-fake_listings_db = [] # New database for listings
+fake_listings_db = []
 
 # --- Pydantic Models for Token ---
 class TokenData(BaseModel):
@@ -90,7 +91,6 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
 
 @app.get("/users/me/", response_model=models.User)
 def read_users_me(current_user: dict = Depends(get_current_user)):
-    # We return a User model instance from the dictionary
     return models.User.from_attributes(current_user)
 
 @app.post("/users/", response_model=models.User)
@@ -107,20 +107,18 @@ def create_user(user: models.UserCreate):
     fake_users_db.append(new_user)
     return new_user
 
-# --- NEW LISTING ENDPOINT ---
 @app.post("/listings/", response_model=models.Listing)
 def create_listing(
     listing: models.ListingCreate,
     current_user: dict = Depends(get_current_user)
 ):
-    # Convert the Pydantic model to a dictionary to store it
     listing_data = listing.dict()
-    # Add the new ID and the owner's ID
     listing_data["id"] = len(fake_listings_db) + 1
     listing_data["owner_id"] = current_user["id"]
-    
-    # "Save" to our fake database
     fake_listings_db.append(listing_data)
-    
-    # Return the created listing data
     return listing_data
+
+# --- NEW ENDPOINT TO VIEW LISTINGS ---
+@app.get("/listings/", response_model=List[models.Listing])
+def read_listings():
+    return fake_listings_db
