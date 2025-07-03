@@ -1,47 +1,106 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
-import models # Import the models we just created
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+from pydantic import BaseModel, EmailStr # Make sure pydantic is imported
+import models
 
 # --- Security Setup ---
-# We specify the hashing algorithm we want to use
+SECRET_KEY = "a_super_secret_key_change_this_later"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # --- Application Setup ---
 app = FastAPI()
 
-# This is a temporary, in-memory "database"
-# It's just a list that will reset every time the app restarts.
+# Temporary in-memory "database"
 fake_users_db = []
 
+# --- Pydantic Models for Token ---
+class TokenData(BaseModel):
+    email: EmailStr | None = None
+
 # --- Utility Functions ---
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
 def get_password_hash(password):
     return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+def get_user(email: str):
+    for user in fake_users_db:
+        if user["email"] == email:
+            return user
+    return None
+
+# --- Dependency for getting current user ---
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+        token_data = TokenData(email=email)
+    except JWTError:
+        raise credentials_exception
+    user = get_user(email=token_data.email)
+    if user is None:
+        raise credentials_exception
+    return user
 
 # --- API Endpoints ---
 @app.get("/")
 def read_root():
     return {"message": "Hello from the Uni-Share Platform API"}
 
+@app.post("/token")
+def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = get_user(form_data.username)
+    if not user or not verify_password(form_data.password, user["hashed_password"]):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["email"]}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
 @app.post("/users/", response_model=models.User)
 def create_user(user: models.UserCreate):
-    # Check if user already exists
-    for db_user in fake_users_db:
-        if db_user["email"] == user.email:
-            raise HTTPException(status_code=400, detail="Email already registered")
-
-    # Hash the password before storing
+    db_user = get_user(user.email)
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
     hashed_password = get_password_hash(user.password)
-
-    # Create a new user object (as a dictionary for our fake db)
-    # Note: In a real DB, this would be an object with an auto-incrementing ID
     new_user = {
         "id": len(fake_users_db) + 1,
         "email": user.email,
         "hashed_password": hashed_password
     }
-
-    # "Save" the user to our fake database
     fake_users_db.append(new_user)
-    
-    # Return the new user's data (without the password)
     return new_user
+
+@app.get("/users/me/", response_model=models.User)
+def read_users_me(current_user: models.User = Depends(get_current_user)):
+    return current_user
