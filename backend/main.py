@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
-from pydantic import BaseModel, EmailStr # Make sure pydantic is imported
+from pydantic import BaseModel, EmailStr
 import models
 
 # --- Security Setup ---
@@ -17,8 +17,9 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 # --- Application Setup ---
 app = FastAPI()
 
-# Temporary in-memory "database"
+# --- Temporary In-Memory "Databases" ---
 fake_users_db = []
+fake_listings_db = [] # New database for listings
 
 # --- Pydantic Models for Token ---
 class TokenData(BaseModel):
@@ -87,6 +88,11 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
+@app.get("/users/me/", response_model=models.User)
+def read_users_me(current_user: dict = Depends(get_current_user)):
+    # We return a User model instance from the dictionary
+    return models.User.from_attributes(current_user)
+
 @app.post("/users/", response_model=models.User)
 def create_user(user: models.UserCreate):
     db_user = get_user(user.email)
@@ -101,6 +107,20 @@ def create_user(user: models.UserCreate):
     fake_users_db.append(new_user)
     return new_user
 
-@app.get("/users/me/", response_model=models.User)
-def read_users_me(current_user: models.User = Depends(get_current_user)):
-    return current_user
+# --- NEW LISTING ENDPOINT ---
+@app.post("/listings/", response_model=models.Listing)
+def create_listing(
+    listing: models.ListingCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    # Convert the Pydantic model to a dictionary to store it
+    listing_data = listing.dict()
+    # Add the new ID and the owner's ID
+    listing_data["id"] = len(fake_listings_db) + 1
+    listing_data["owner_id"] = current_user["id"]
+    
+    # "Save" to our fake database
+    fake_listings_db.append(listing_data)
+    
+    # Return the created listing data
+    return listing_data
