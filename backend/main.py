@@ -4,7 +4,7 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from pydantic import BaseModel, EmailStr
-from typing import List, Optional # Import Optional
+from typing import List, Optional
 import models
 
 # --- Security Setup ---
@@ -118,13 +118,26 @@ def create_listing(
     fake_listings_db.append(listing_data)
     return listing_data
 
-# --- MODIFIED ENDPOINT TO VIEW LISTINGS WITH FILTERING ---
+# --- MODIFIED ENDPOINT WITH KEYWORD SEARCH ---
 @app.get("/listings/", response_model=List[models.Listing])
-def read_listings(category: Optional[models.Category] = None):
+def read_listings(
+    category: Optional[models.Category] = None,
+    q: Optional[str] = None  # q is the conventional name for a query parameter
+):
+    results = fake_listings_db
+    
+    # Apply category filter if provided
     if category:
-        # Return only listings that match the category
-        return [
-            listing for listing in fake_listings_db if listing["category"] == category
+        results = [
+            listing for listing in results if listing["category"] == category
         ]
-    # Return all listings if no category is provided
-    return fake_listings_db
+    
+    # Apply keyword search filter if provided
+    if q:
+        results = [
+            listing for listing in results 
+            if q.lower() in listing["title"].lower() or 
+               (listing["description"] and q.lower() in listing["description"].lower())
+        ]
+        
+    return results
